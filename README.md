@@ -1,7 +1,5 @@
 # Celestial Project Showcase & Voting
 
-# Celestial Project Showcase & Voting
-
 A serverless project gallery and live voting podium created for the **Women in AI/ML (Amazon)** and **Singapore Computer Society** community.
 
 <p align="center">
