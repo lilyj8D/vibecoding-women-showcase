@@ -7,6 +7,7 @@ Single Lambda that:
   - GET  /          serves the showcase/voting page (showcase.html)
   - GET  /projects  returns the public projects + leaderboard JSON (polling endpoint)
   - GET  /file      streams a private S3-stored uploaded file
+  - GET  /thumbnail streams a private S3-stored project thumbnail image
   - POST /submit     creates a project (URL or uploaded file)
   - POST /update     edits a project with its secret edit token
   - POST /delete     removes a project with its secret edit token
@@ -46,6 +47,7 @@ SEND_SUBMITTER_CONFIRMATION = os.environ.get("SEND_SUBMITTER_CONFIRMATION", "fal
 
 MAX_VOTES_PER_EMAIL = int(os.environ.get("MAX_VOTES_PER_EMAIL", "3"))
 MAX_FILE_BYTES = int(os.environ.get("MAX_FILE_BYTES", str(6 * 1024 * 1024)))  # 6 MB
+MAX_THUMBNAIL_BYTES = int(os.environ.get("MAX_THUMBNAIL_BYTES", str(2 * 1024 * 1024)))  # 2 MB
 
 # Allowed upload content types -> canonical extension.
 ALLOWED_CONTENT_TYPES = {
@@ -57,6 +59,12 @@ ALLOWED_CONTENT_TYPES = {
     "image/webp": "webp",
     "application/pdf": "pdf",
     "text/html": "html",
+}
+
+ALLOWED_THUMBNAIL_TYPES = {
+    "image/png": "png",
+    "image/jpeg": "jpg",
+    "image/webp": "webp",
 }
 
 _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
@@ -134,6 +142,22 @@ def validate_file(content_type, raw_bytes):
         mb = MAX_FILE_BYTES / (1024 * 1024)
         return False, "File is too large. Maximum size is %.0f MB." % mb, None
     return True, None, ALLOWED_CONTENT_TYPES[ct]
+
+
+def validate_thumbnail(content_type, raw_bytes):
+    """
+    Validate an uploaded thumbnail image's type and size.
+    Returns (ok: bool, error: str|None, extension: str|None).
+    """
+    ct = (content_type or "").split(";")[0].strip().lower()
+    if ct not in ALLOWED_THUMBNAIL_TYPES:
+        return False, "Unsupported thumbnail type. Use JPG, PNG, or WEBP.", None
+    if not raw_bytes:
+        return False, "Thumbnail image is empty.", None
+    if len(raw_bytes) > MAX_THUMBNAIL_BYTES:
+        mb = MAX_THUMBNAIL_BYTES / (1024 * 1024)
+        return False, "Thumbnail is too large. Maximum size is %.0f MB." % mb, None
+    return True, None, ALLOWED_THUMBNAIL_TYPES[ct]
 
 
 def decode_base64(data):
@@ -237,6 +261,43 @@ def _file_route(project_id):
     return "/file?id=%s" % project_id
 
 
+def _thumbnail_route(project_id):
+    return "/thumbnail?id=%s" % project_id
+
+
+def _store_thumbnail(payload, project_id):
+    """
+    Validate and store an optional uploaded thumbnail image in private S3.
+    Returns (thumbnail_key|None, thumbnail_content_type|None, error|None).
+    A missing thumbnail is not an error; it returns (None, None, None).
+    """
+    encoded = payload.get("thumbnail_base64")
+    if not encoded:
+        return None, None, None
+    raw = decode_base64(encoded)
+    if raw is None:
+        return None, None, "Could not read the uploaded thumbnail."
+    ok, err, ext = validate_thumbnail(payload.get("thumbnail_content_type"), raw)
+    if not ok:
+        return None, None, err
+    content_type = (payload.get("thumbnail_content_type") or "").split(";")[0].strip()
+    # Kept under the existing "uploads/" prefix so the Lambda's least-privilege S3
+    # policy (uploads/*) covers thumbnails without any IAM change. The extra
+    # "thumb/" segment prevents collisions with a submitter's attachment filename.
+    thumbnail_key = "uploads/%s/thumb/image.%s" % (project_id, ext)
+    try:
+        _client_s3().put_object(
+            Bucket=UPLOAD_BUCKET,
+            Key=thumbnail_key,
+            Body=raw,
+            ContentType=content_type or "application/octet-stream",
+        )
+    except Exception as e:
+        print("S3 thumbnail put_object failed:", repr(e))
+        return None, None, "Could not store the uploaded thumbnail."
+    return thumbnail_key, content_type, None
+
+
 # ---------------------------------------------------------------------------
 # Route: GET / (page)
 # ---------------------------------------------------------------------------
@@ -277,6 +338,7 @@ def get_projects():
             "video_url": it.get("video_url", ""),
             "github_url": it.get("github_url", ""),
             "live_url": it.get("live_url", ""),
+            "thumbnail_route": _thumbnail_route(it.get("project_id")) if it.get("thumbnail_key") else "",
             "vote_count": int(it.get("vote_count", 0) or 0),
             "created_at": it.get("created_at", ""),
         }
@@ -333,6 +395,37 @@ def get_file(project_id):
         "headers": {
             "Content-Type": content_type,
             "Content-Disposition": '%s; filename="%s"' % (disposition, file_name),
+            "Cache-Control": "public, max-age=3600",
+        },
+        "body": base64.b64encode(raw).decode("utf-8"),
+        "isBase64Encoded": True,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Route: GET /thumbnail?id=<project_id>  (stream a private S3 thumbnail image)
+# ---------------------------------------------------------------------------
+
+def get_thumbnail(project_id):
+    if not project_id:
+        return json_response(400, {"error": "Missing project id"})
+    table = _res_dynamodb().Table(PROJECTS_TABLE)
+    item = table.get_item(Key={"project_id": project_id}).get("Item")
+    if not item or item.get("is_deleted") or not item.get("thumbnail_key"):
+        return json_response(404, {"error": "Thumbnail not found"})
+
+    try:
+        obj = _client_s3().get_object(Bucket=UPLOAD_BUCKET, Key=item["thumbnail_key"])
+        raw = obj["Body"].read()
+    except Exception:
+        return json_response(404, {"error": "Thumbnail not found"})
+
+    content_type = item.get("thumbnail_content_type", "image/jpeg")
+    return {
+        "statusCode": 200,
+        "headers": {
+            "Content-Type": content_type,
+            "Content-Disposition": "inline",
             "Cache-Control": "public, max-age=3600",
         },
         "body": base64.b64encode(raw).decode("utf-8"),
@@ -438,6 +531,11 @@ def post_submit(payload):
             return json_response(400, {
                 "error": "The %s URL isn't a valid http(s) link." % label})
 
+    # Optional uploaded thumbnail image (stored in private S3).
+    thumbnail_key, thumbnail_content_type, thumb_err = _store_thumbnail(payload, project_id)
+    if thumb_err:
+        return json_response(400, {"error": thumb_err})
+
     item = {
         "project_id": project_id,
         "title": (payload.get("title") or "").strip(),
@@ -454,6 +552,9 @@ def post_submit(payload):
         "vote_count": 0,
         "created_at": created_at,
     }
+    if thumbnail_key:
+        item["thumbnail_key"] = thumbnail_key
+        item["thumbnail_content_type"] = thumbnail_content_type
 
     # 3. Handle URL vs file.
     if link_type == "url":
@@ -568,6 +669,14 @@ def post_update(payload):
         "updated_at": now_utc().isoformat(),
     }
     updates.update(optional_urls)
+
+    # Optional replacement thumbnail. If none is uploaded, the existing one is kept.
+    if payload.get("thumbnail_base64"):
+        new_key, new_ct, thumb_err = _store_thumbnail(payload, project_id)
+        if thumb_err:
+            return json_response(400, {"error": thumb_err})
+        updates["thumbnail_key"] = new_key
+        updates["thumbnail_content_type"] = new_ct
 
     if link_type == "url":
         project_url = (payload.get("project_url") or "").strip()
@@ -800,7 +909,7 @@ def _extract_path(event):
     so `/prod/projects` and `/projects` both map to `/projects`.
     """
     path = event.get("rawPath") or event.get("path") or "/"
-    known = ("/submit", "/update", "/delete", "/vote", "/projects", "/file")
+    known = ("/submit", "/update", "/delete", "/vote", "/projects", "/file", "/thumbnail")
     for route in known:
         if path == route or path.endswith(route):
             return route
@@ -839,6 +948,8 @@ def lambda_handler(event, context):
             return get_projects()
         if path == "/file":
             return get_file(qs.get("id"))
+        if path == "/thumbnail":
+            return get_thumbnail(qs.get("id"))
         # Unknown GET -> serve the page (SPA-style fallback).
         return serve_page()
 

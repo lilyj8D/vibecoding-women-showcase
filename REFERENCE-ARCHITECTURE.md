@@ -155,8 +155,14 @@ vibecoding-women-showcase-uploads
 Object layout:
 
 ```text
-uploads/{project_id}/{sanitized_filename}
+uploads/{project_id}/{sanitized_filename}      # project attachment
+uploads/{project_id}/thumb/image.{ext}         # project thumbnail image
 ```
+
+Both objects intentionally live under the single `uploads/` prefix so the Lambda's
+least-privilege S3 policy (`uploads/*`) covers attachments and thumbnails without needing a
+broader grant. The extra `thumb/` segment prevents a thumbnail from colliding with a
+submitter's attachment filename.
 
 S3 Block Public Access remains enabled. Lambda uses its execution role to put and get objects. A browser cannot directly access the bucket.
 
@@ -193,6 +199,7 @@ Soft deletion avoids requiring DynamoDB `DeleteItem` or S3 `DeleteObject`.
 | `GET` | `/` | Read and return bundled `showcase.html` |
 | `GET` | `/projects` | Scan active projects, sort rankings, return public JSON |
 | `GET` | `/file?id={project_id}` | Authorize project visibility, retrieve its private S3 object, return base64 binary response |
+| `GET` | `/thumbnail?id={project_id}` | Retrieve the project's private thumbnail image and return it inline as a base64 binary response |
 | `POST` | `/submit` | Validate and create a project, upload optional file, issue edit secret, notify host |
 | `POST` | `/vote` | Validate voter/project, enforce limits, store vote, increment project counter |
 | `POST` | `/update` | Validate edit token and deadline, update only editable fields |
@@ -331,6 +338,8 @@ Afterward:
 | `file_key` | Private | Private S3 object key |
 | `file_name` | Public for file projects | Display/download filename |
 | `file_content_type` | Public for file projects | Response content type |
+| `thumbnail_key` | Private | Private S3 key of the uploaded thumbnail image |
+| `thumbnail_content_type` | Private | Content type used when streaming the thumbnail |
 | `vote_count` | Public | Denormalized leaderboard count |
 | `created_at` | Public | Server timestamp and tie-break value |
 | `updated_at` | Private | Last owner edit timestamp |

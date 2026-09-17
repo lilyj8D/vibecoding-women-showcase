@@ -1,5 +1,7 @@
 # Celestial Project Showcase & Voting
 
+# Celestial Project Showcase & Voting
+
 A serverless project gallery and live voting podium created for the **Women in AI/ML (Amazon)** and **Singapore Computer Society** community.
 
 <p align="center">
@@ -19,7 +21,7 @@ Each submission can include:
 - Creator name and email
 - Project title and short description
 - A public project URL **or** an uploaded ZIP, image, PDF, or HTML file
-- Optional project thumbnail URL
+- Optional project thumbnail, either uploaded (JPG/PNG/WEBP, max 2 MB) or as an image URL
 - Optional YouTube, Loom, or Vimeo demo
 - Optional GitHub repository
 - Optional live app or product webpage
@@ -125,6 +127,7 @@ For component-level details, request sequences, data models, trust boundaries, f
 | `GET` | `/` | Serve the showcase page |
 | `GET` | `/projects` | Return active projects, vote counts, deadline, and open/closed state |
 | `GET` | `/file?id=…` | Stream an uploaded file from private S3 storage |
+| `GET` | `/thumbnail?id=…` | Stream an uploaded project thumbnail from private S3 storage |
 | `POST` | `/submit` | Create a project and issue its private edit key |
 | `POST` | `/vote` | Cast a server-validated vote |
 | `POST` | `/update` | Edit a project using its private edit key |
@@ -170,6 +173,7 @@ The Lambda reads these environment variables:
 | `SEND_SUBMITTER_CONFIRMATION` | `false` | Optional submitter email; off for SES sandbox |
 | `MAX_VOTES_PER_EMAIL` | `3` | Total active-project votes per email |
 | `MAX_FILE_BYTES` | `6291456` | Six-megabyte attachment limit |
+| `MAX_THUMBNAIL_BYTES` | `2097152` | Two-megabyte thumbnail image limit |
 
 ## Security highlights
 
@@ -201,7 +205,7 @@ If API Gateway already uses `ANY /` and `ANY /{proxy+}`, no API Gateway redeploy
 - `GET /projects` scans the projects table and is appropriate for the expected project count; a larger deployment should add pagination or indexes.
 - The browser polls rather than using WebSockets.
 - Uploaded files travel as base64 through API Gateway and Lambda, so the six-megabyte limit is important.
-- Thumbnail images currently use publicly reachable image URLs.
+- Uploaded thumbnails are served as binary through API Gateway, which requires binary media types (`*/*`) to be configured on the API.
 - SES submitter confirmations remain off while the AWS account is in the SES sandbox.
 
 ## License

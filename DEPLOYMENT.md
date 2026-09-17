@@ -44,22 +44,37 @@ no API Gateway change or redeployment is needed. The existing proxy automaticall
 If you created explicit routes instead, add both `POST /update` and `POST /delete` with Lambda
 proxy integration to the same Lambda, then redeploy the `prod` stage.
 
+### Binary media types (required for uploaded thumbnails and file previews)
+
+Uploaded thumbnails and attachments are returned as binary responses, so the API must be
+configured to pass binary content through:
+
+1. API Gateway → your API → **API settings** → **Binary media types**.
+2. Add `*/*`.
+3. Save, then go to **Resources** → **Deploy API** → select the `prod` stage → **Deploy**.
+
+Settings changes only take effect after redeploying the stage. Without this, uploaded
+thumbnails save successfully but render as broken images.
+
 ## Smoke test
 
 Use a new test submission because projects created before this release do not have edit tokens.
 
-1. Submit a URL-based project.
-2. Confirm the page displays a private edit key and lets you copy it.
-3. Confirm that project's card shows **Edit** in the same browser.
-4. Edit its title or description and save.
-5. Confirm its vote count and creator name remain unchanged.
-6. In a private/incognito window, choose **Edit with a saved key**, paste the key, and save a
+1. Submit a URL-based project, including an uploaded thumbnail image (JPG/PNG/WEBP under 2 MB).
+2. Confirm the thumbnail renders on the gallery card and inside the **Learn more** view.
+3. Confirm the page displays a private edit key and lets you copy it.
+4. Confirm that project's card shows **Edit** in the same browser.
+5. Edit its title or description and save.
+6. Confirm its vote count and creator name remain unchanged.
+7. Edit the project again, upload a different thumbnail, and confirm it replaces the previous one.
+8. Edit once more without choosing a thumbnail, and confirm the existing thumbnail is kept.
+9. In a private/incognito window, choose **Edit with a saved key**, paste the key, and save a
    second change.
-7. Try a deliberately modified key and confirm the update is rejected.
-8. Delete the test project and confirm the warning dialog appears before removal.
-9. Confirm the project disappears from the gallery and leaderboard after deletion.
-10. If the project had a vote, confirm that voter can use the released vote on another project.
-11. Verify normal voting, search, media, and Learn More still work.
+10. Try a deliberately modified key and confirm the update is rejected.
+11. Delete the test project and confirm the warning dialog appears before removal.
+12. Confirm the project disappears from the gallery and leaderboard after deletion.
+13. If the project had a vote, confirm that voter can use the released vote on another project.
+14. Verify normal voting, search, media, and Learn More still work.
 
 ## Important compatibility note
 
