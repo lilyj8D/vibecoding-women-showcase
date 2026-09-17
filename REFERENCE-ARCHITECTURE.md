@@ -1,7 +1,5 @@
 # AWS Reference Architecture
 
-# AWS Reference Architecture
-
 This document explains the AWS implementation behind the **Celestial Project Showcase & Voting** application presented by **Women in AI/ML (Amazon)** and **Singapore Computer Society**.
 
 - **Live application:** https://acasu1d5ci.execute-api.us-west-2.amazonaws.com/prod/

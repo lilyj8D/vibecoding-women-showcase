@@ -83,7 +83,7 @@ flowchart TB
 
     subgraph AWS[AWS Cloud - us-west-2]
         APIGW[Amazon API Gateway REST API<br/>prod stage]
-        Lambda[AWS Lambda<br/>Python application + mystic HTML]
+        Lambda[AWS Lambda<br/>Python application + bundled HTML]
         Projects[(Amazon DynamoDB<br/>Projects table)]
         Votes[(Amazon DynamoDB<br/>Votes table)]
         S3[(Amazon S3<br/>Private uploaded files)]
@@ -136,12 +136,11 @@ API Gateway is configured with `ANY /` and `ANY /{proxy+}`, so all application p
 ## Repository layout
 
 ```text
-showcase-app/
+.
 ├── README.md
 ├── REFERENCE-ARCHITECTURE.md
 ├── DEPLOYMENT.md
 ├── LICENSE
-├── .gitignore
 ├── lambda_function.py
 ├── showcase.html
 └── dist/

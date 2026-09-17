@@ -1,5 +1,3 @@
-# Upgrade the existing deployment to Showcase Mystic
-
 # Deployment Guide
 
 Use the prepared package:
